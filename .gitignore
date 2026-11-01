@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# AWS / AgentCore local configuration and deployment state
+.bedrock_agentcore/
+.bedrock_agentcore.yaml
+.csai_resource_state.json
+project_resources.env
+
+# Local scripts and backups
+paste.sh
+main_original.py
+main_before_consolidated_fix.py
+bootstrap_customer_support_aws_corrected.py
+setup_permissions.py
+
+# Temporary project archives and files
+project_context.tar.gz
+project_screenshots.zip
+h paste,sh
+%2
+
+# IDE and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
