@@ -29,8 +29,6 @@ from strands_tools.browser import AgentCoreBrowser
 
 # ============================================================
 # CONFIGURATION
-# Resource-specific values are supplied through environment variables.
-# AWS credentials are supplied by the Udacity lab environment.
 # ============================================================
 
 logging.basicConfig(level=logging.INFO)
@@ -52,7 +50,7 @@ _bedrock_runtime = boto3.client(
 
 
 # ============================================================
-# MESSAGE HELPERS
+# MESSAGE AND MEMORY HELPERS
 # ============================================================
 
 def _plain_text(message: Any) -> str:
@@ -75,6 +73,36 @@ def _message_role(message: Any) -> str:
     return str(message.get("role", "")).lower() if isinstance(message, dict) else ""
 
 
+def _memory_text(memory: Any) -> str:
+    """Extract readable text from supported AgentCore Memory record shapes."""
+    if isinstance(memory, str):
+        return memory.strip()
+    if not isinstance(memory, dict):
+        return ""
+
+    for key in ("content", "text", "memory", "value"):
+        value = memory.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            nested = value.get("text") or value.get("value")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+        if isinstance(value, list):
+            parts = [
+                item.get("text", "")
+                for item in value
+                if isinstance(item, dict)
+                and isinstance(item.get("text"), str)
+            ]
+            combined = "\n".join(
+                part for part in parts if part.strip()
+            ).strip()
+            if combined:
+                return combined
+    return ""
+
+
 # ============================================================
 # AGENTCORE MEMORY
 # ============================================================
@@ -84,6 +112,7 @@ def get_namespaces(
 ) -> Dict[str, str]:
     if not memory_id or memory_id.startswith("<"):
         return {}
+
     try:
         response = mem_client.get_memory_strategies(memory_id=memory_id)
     except TypeError:
@@ -96,7 +125,10 @@ def get_namespaces(
             "memoryStrategies", response.get("strategies", [])
         )
     else:
-        logger.warning("Unexpected memory response type: %s", type(response).__name__)
+        logger.warning(
+            "Unexpected memory strategy response type: %s",
+            type(response).__name__,
+        )
         return {}
 
     namespaces = {}
@@ -106,17 +138,20 @@ def get_namespaces(
         strategy = item.get("strategy", item)
         if not isinstance(strategy, dict):
             continue
+
         kind = strategy.get("type") or strategy.get("strategyType")
         values = strategy.get("namespaces") or []
         if isinstance(values, str):
             values = [values]
+
         if not values:
             templates = strategy.get("namespaceTemplates") or []
             values = [
-                (v.get("template") or v.get("namespace") or v)
-                if isinstance(v, dict) else v
-                for v in templates
+                (value.get("template") or value.get("namespace") or value)
+                if isinstance(value, dict) else value
+                for value in templates
             ]
+
         if kind and values:
             first = values[0]
             if isinstance(first, dict):
@@ -130,8 +165,11 @@ def get_namespaces(
 
 class MemoryHook(HookProvider):
     def __init__(
-        self, actor_id: str, session_id: str,
-        memory_client: MemoryClient, memory_id: str
+        self,
+        actor_id: str,
+        session_id: str,
+        memory_client: MemoryClient,
+        memory_id: str,
     ):
         self.actor_id = actor_id
         self.session_id = session_id
@@ -142,12 +180,15 @@ class MemoryHook(HookProvider):
     def retrieve_customer_context(self, event: MessageAddedEvent):
         if not self.memory_id or not self.namespaces:
             return
+
         messages = getattr(getattr(event, "agent", None), "messages", [])
         if not messages:
             return
+
         message = messages[-1]
         if _message_role(message) != "user":
             return
+
         query = _plain_text(message)
         if not query:
             return
@@ -166,39 +207,67 @@ class MemoryHook(HookProvider):
                     top_k=5,
                 )
             except Exception as exc:
-                logger.warning("Memory retrieval failed for %s: %s", strategy_type, exc)
+                logger.warning(
+                    "Memory retrieval failed for %s: %s",
+                    strategy_type,
+                    exc,
+                )
                 continue
 
-            memories = (
-                response.get("memories", response.get("results", []))
-                if isinstance(response, dict) else []
-            )
+            # retrieve_memories can return a list directly or a wrapped dict.
+            if isinstance(response, list):
+                memories = response
+            elif isinstance(response, dict):
+                memories = response.get(
+                    "memories", response.get("results", [])
+                )
+            else:
+                memories = []
+
+            if not isinstance(memories, list):
+                logger.warning(
+                    "Unexpected retrieved memory collection for %s: %s",
+                    strategy_type,
+                    type(memories).__name__,
+                )
+                continue
+
             for memory in memories:
-                if isinstance(memory, str):
-                    text = memory
-                elif isinstance(memory, dict):
-                    text = memory.get("content") or memory.get("text") or memory.get("memory") or ""
-                    if isinstance(text, dict):
-                        text = text.get("text", "")
-                else:
-                    text = ""
+                text = _memory_text(memory)
                 if text:
                     found.append(f"[{strategy_type}] {text}")
 
         if found:
-            enriched = "Customer Context:\n" + "\n".join(found) + "\n\n" + query
+            enriched = (
+                "Customer Context:\n"
+                + "\n".join(found)
+                + "\n\nCurrent customer message:\n"
+                + query
+            )
             message["content"] = (
                 [{"text": enriched}]
                 if isinstance(message.get("content"), list)
                 else enriched
             )
+            logger.info(
+                "Injected %d retrieved memory record(s) for customer %s.",
+                len(found),
+                self.actor_id,
+            )
+        else:
+            logger.info(
+                "No relevant prior memories retrieved for customer %s.",
+                self.actor_id,
+            )
 
     def save_support_interaction(self, event: AfterInvocationEvent):
         if not self.memory_id:
             return
+
         messages = getattr(getattr(event, "agent", None), "messages", [])
         user_text = ""
         assistant_text = ""
+
         for message in reversed(messages or []):
             role = _message_role(message)
             text = _plain_text(message)
@@ -210,22 +279,39 @@ class MemoryHook(HookProvider):
                 user_text = text
             if user_text and assistant_text:
                 break
+
         if not user_text or not assistant_text:
+            logger.warning(
+                "Memory event not saved: user or assistant message was missing."
+            )
             return
+
         try:
             self.memory_client.create_event(
                 memory_id=self.memory_id,
                 actor_id=self.actor_id,
                 session_id=self.session_id,
-                messages=[(user_text, "USER"), (assistant_text, "ASSISTANT")],
+                messages=[
+                    (user_text, "USER"),
+                    (assistant_text, "ASSISTANT"),
+                ],
             )
-            logger.info("Customer interaction saved to AgentCore Memory.")
+            logger.info(
+                "Customer interaction saved to AgentCore Memory "
+                "(actor=%s, session=%s).",
+                self.actor_id,
+                self.session_id,
+            )
         except Exception as exc:
             logger.warning("Memory save failed: %s", exc)
 
     def register_hooks(self, registry: HookRegistry):
-        registry.add_callback(MessageAddedEvent, self.retrieve_customer_context)
-        registry.add_callback(AfterInvocationEvent, self.save_support_interaction)
+        registry.add_callback(
+            MessageAddedEvent, self.retrieve_customer_context
+        )
+        registry.add_callback(
+            AfterInvocationEvent, self.save_support_interaction
+        )
 
 
 # ============================================================
@@ -245,7 +331,11 @@ def search_knowledge_base(query: str) -> str:
         chunks = []
         for item in response.get("retrievalResults", []):
             content = item.get("content", {})
-            text = content.get("text", "") if isinstance(content, dict) else ""
+            text = (
+                content.get("text", "")
+                if isinstance(content, dict)
+                else ""
+            )
             if text:
                 chunks.append(text)
         return "\n---\n".join(chunks) if chunks else (
@@ -253,7 +343,10 @@ def search_knowledge_base(query: str) -> str:
         )
     except Exception as exc:
         logger.exception("Knowledge Base retrieval failed.")
-        return f"Knowledge Base search is temporarily unavailable: {type(exc).__name__}"
+        return (
+            "Knowledge Base search is temporarily unavailable: "
+            f"{type(exc).__name__}"
+        )
 
 
 # ============================================================
@@ -261,20 +354,23 @@ def search_knowledge_base(query: str) -> str:
 # ============================================================
 
 _LOYALTY_FIELDS = {
-    "points_redeemed", "points_discount", "tier_discount_pct",
-    "tier_discount", "final_total", "total_savings",
-    "points_earned", "remaining_points",
+    "points_redeemed",
+    "points_discount",
+    "tier_discount_pct",
+    "tier_discount",
+    "final_total",
+    "total_savings",
+    "points_earned",
+    "remaining_points",
 }
 
 
 def _extract_code_interpreter_json(response: Any) -> Dict[str, Any]:
-    """
-    AgentCore SDK returns an event stream. Each execution event has
-    event['result']; stdout is in result['structuredContent']['stdout'],
-    and textual output may also appear in result['content'].
-    """
+    """Parse structured JSON from the AgentCore Code Interpreter event stream."""
     if not isinstance(response, dict) or "stream" not in response:
-        raise RuntimeError("Code Interpreter response has no execution stream.")
+        raise RuntimeError(
+            "Code Interpreter response has no execution stream."
+        )
 
     candidates = []
     errors = []
@@ -287,7 +383,9 @@ def _extract_code_interpreter_json(response: Any) -> Dict[str, Any]:
             continue
 
         if result.get("isError"):
-            errors.append("Code Interpreter marked execution as an error.")
+            errors.append(
+                "Code Interpreter marked execution as an error."
+            )
 
         structured = result.get("structuredContent", {})
         if isinstance(structured, dict):
@@ -325,21 +423,93 @@ def _extract_code_interpreter_json(response: Any) -> Dict[str, Any]:
             except json.JSONDecodeError:
                 continue
 
-        if not isinstance(parsed, dict) or not _LOYALTY_FIELDS.issubset(parsed):
+        if (
+            not isinstance(parsed, dict)
+            or not _LOYALTY_FIELDS.issubset(parsed)
+        ):
             continue
 
         for key in _LOYALTY_FIELDS:
             value = parsed[key]
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise RuntimeError(f"Invalid non-numeric interpreter value: {key}")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+            ):
+                raise RuntimeError(
+                    f"Invalid non-numeric interpreter value: {key}"
+                )
         return parsed
 
-    raise RuntimeError("Execution stream did not contain the expected loyalty JSON.")
+    raise RuntimeError(
+        "Execution stream did not contain the expected loyalty JSON."
+    )
 
 
 # ============================================================
-# LOYALTY CALCULATOR — SAME BUSINESS RULES AS EXISTING FILE
+# LOYALTY CALCULATION AND DETERMINISTIC FALLBACK
 # ============================================================
+
+def _calculate_tier_fallback(
+    loyalty_points: int,
+    tier: str,
+    order_total: float,
+    product_category: str,
+) -> Dict[str, Any]:
+    """Apply the same documented points and tier rules without Code Interpreter."""
+    tier_rates = {
+        "Silver": 0.00,
+        "Gold": 0.10,
+        "Platinum": 0.15,
+    }
+    earn_rates = {
+        "standard": 1,
+        "device": 2,
+        "fresh": 5,
+    }
+
+    safe_tier = tier.title() if tier.title() in tier_rates else "Silver"
+    safe_category = product_category.lower()
+    points_balance = max(0, int(loyalty_points))
+    total = max(0.0, float(order_total))
+
+    requested_points = (points_balance // 500) * 500
+    max_points_by_value = int((total * 0.50) * 100)
+    max_points_by_value = (max_points_by_value // 500) * 500
+    points_redeemed = min(requested_points, max_points_by_value)
+
+    if points_redeemed < 500:
+        points_redeemed = 0
+
+    points_discount = points_redeemed / 100.0
+    subtotal_after_points = max(0.0, total - points_discount)
+    tier_discount_pct = tier_rates[safe_tier]
+    tier_discount = round(
+        subtotal_after_points * tier_discount_pct, 2
+    )
+    final_total = round(
+        max(0.0, subtotal_after_points - tier_discount), 2
+    )
+    total_savings = round(total - final_total, 2)
+
+    earn_rate = earn_rates.get(safe_category, 1)
+    points_earned = int(final_total * earn_rate)
+    remaining_points = (
+        points_balance - points_redeemed + points_earned
+    )
+
+    return {
+        "points_redeemed": points_redeemed,
+        "points_discount": round(points_discount, 2),
+        "tier_discount_pct": int(tier_discount_pct * 100),
+        "tier_discount": tier_discount,
+        "final_total": final_total,
+        "total_savings": total_savings,
+        "points_earned": points_earned,
+        "remaining_points": remaining_points,
+        "calculation_method": "tier_fallback",
+        "calculation_completed": True,
+    }
+
 
 @tool
 def calculate_loyalty_discount(
@@ -348,8 +518,12 @@ def calculate_loyalty_discount(
     order_total: float,
     product_category: str = "standard",
 ) -> str:
-    """Calculate loyalty redemption, tier discount, savings and earned points in AgentCore Code Interpreter."""
-    safe_tier = tier.title() if tier.title() in {"Silver", "Gold", "Platinum"} else "Silver"
+    """Calculate loyalty redemption and tier discount with Code Interpreter and a deterministic fallback."""
+    safe_tier = (
+        tier.title()
+        if tier.title() in {"Silver", "Gold", "Platinum"}
+        else "Silver"
+    )
     safe_category = product_category.lower()
     loyalty_points = max(0, int(loyalty_points))
     order_total = max(0.0, float(order_total))
@@ -401,6 +575,9 @@ print(json.dumps({{
             )
 
         calculation = _extract_code_interpreter_json(response)
+        calculation["calculation_method"] = "code_interpreter"
+        calculation["calculation_completed"] = True
+
         logger.info(
             "Code Interpreter loyalty calculation validated: %s",
             json.dumps(calculation, sort_keys=True),
@@ -408,14 +585,21 @@ print(json.dumps({{
         return json.dumps(calculation, sort_keys=True)
 
     except Exception as exc:
-        logger.exception("Code Interpreter loyalty calculation failed.")
-        return json.dumps({
-            "fallback": True,
-            "calculation_completed": False,
-            "error": type(exc).__name__,
-            "message": str(exc),
-            "note": "No loyalty figures should be presented as verified.",
-        })
+        logger.exception(
+            "Code Interpreter failed; using deterministic loyalty fallback."
+        )
+        fallback = _calculate_tier_fallback(
+            loyalty_points=loyalty_points,
+            tier=safe_tier,
+            order_total=order_total,
+            product_category=safe_category,
+        )
+        fallback["fallback_reason"] = type(exc).__name__
+        logger.warning(
+            "Loyalty fallback result: %s",
+            json.dumps(fallback, sort_keys=True),
+        )
+        return json.dumps(fallback, sort_keys=True)
 
 
 # ============================================================
@@ -442,7 +626,8 @@ Supply the appropriate customer_id.
 
 REFUNDS:
 Use CustomerSupportRefundLambda___initiate_refund when order_id and reason are known.
-Pass amount only when provided. Report approval only if the tool confirms it.
+Pass the order amount using the amount parameter whenever it is available from
+the customer or a confirmed order lookup. Report approval only if the tool confirms it.
 Use CustomerSupportRefundLambda___check_refund_status with refund_id for status checks.
 Use CustomerSupportRefundLambda___get_return_label with order_id for return labels.
 Never invent refund IDs, statuses, labels, or processing estimates.
@@ -450,15 +635,21 @@ Never invent refund IDs, statuses, labels, or processing estimates.
 KNOWLEDGE BASE:
 Use search_knowledge_base for product specifications, return policies, warranties,
 store policies, loyalty programme information and FAQs. Do not invent policies.
+For membership-tier questions, search the Knowledge Base using the named tier
+and the benefits requested by the customer.
 
 LOYALTY:
 Use calculate_loyalty_discount for all loyalty calculations.
-Report its JSON values exactly; do not recalculate, modify, or guess.
-If it returns fallback=true or calculation_completed=false, explain that
-the calculation could not be verified and do not provide estimated figures.
+Report points_redeemed, tier_discount_pct, final_total and remaining_points
+from its returned JSON. Do not recalculate, modify, or guess these values.
+The tool first attempts AgentCore Code Interpreter and uses a deterministic
+tier fallback if the interpreter is unavailable. Both methods return calculated
+values. Do not describe a successful fallback as a failed calculation.
 
 BROWSER:
-Use the browser tool only when the customer requests information requiring live browsing.
+Use the browser tool when the customer requests information requiring live browsing.
+For page-title requests, navigate to the exact supplied URL and report the
+page title returned by the browser. Do not substitute another website.
 
 GENERAL:
 Never claim an action succeeded unless its tool confirms success.
@@ -477,17 +668,27 @@ async def invoke(payload, context=None):
     try:
         prompt = payload.get("prompt") or payload.get("user_input")
         if not prompt:
-            return "Please provide a customer support question in the prompt field."
+            return (
+                "Please provide a customer support question "
+                "in the prompt field."
+            )
 
         actor_id = str(
-            payload.get("customer_id") or payload.get("actor_id") or "anonymous"
+            payload.get("customer_id")
+            or payload.get("actor_id")
+            or "anonymous"
         )
         session_id = str(payload.get("session_id") or uuid.uuid4())
 
         hooks = []
         if MEMORY_ID and not MEMORY_ID.startswith("<"):
             hooks = [
-                MemoryHook(actor_id, session_id, memory_client, MEMORY_ID)
+                MemoryHook(
+                    actor_id,
+                    session_id,
+                    memory_client,
+                    MEMORY_ID,
+                )
             ]
 
         browser = AgentCoreBrowser(region=REGION)
@@ -505,15 +706,23 @@ async def invoke(payload, context=None):
                     gateway_tools = mcp_client.list_tools_sync()
                     if not gateway_tools:
                         logger.error("Gateway returned no tools.")
-                        return "Customer support tools are currently unavailable."
+                        return (
+                            "Customer support tools are currently unavailable."
+                        )
 
                     discovered_names = [
                         getattr(item, "tool_name", str(item))
                         for item in gateway_tools
                     ]
-                    logger.info("Gateway tools discovered: %s", discovered_names)
+                    logger.info(
+                        "Gateway tools discovered: %s",
+                        discovered_names,
+                    )
                     tools.extend(gateway_tools)
-                    logger.info("Total agent tools registered: %s", len(tools))
+                    logger.info(
+                        "Total agent tools registered: %d",
+                        len(tools),
+                    )
 
                     agent = Agent(
                         model=model,
@@ -550,6 +759,7 @@ async def invoke(payload, context=None):
         for block in content or []:
             if isinstance(block, dict) and block.get("text"):
                 return block["text"]
+
         return str(response)
 
     except Exception as exc:
