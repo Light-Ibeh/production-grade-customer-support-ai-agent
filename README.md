@@ -2,26 +2,26 @@
 
 An AI-powered customer support application built with **Amazon Bedrock AgentCore** and the **Strands Agents SDK**.
 
-The project demonstrates how an AI agent can combine business operations, retrieval-augmented generation (RAG), persistent memory, code execution and browser interaction to deliver an integrated customer support experience.
+The project demonstrates how an AI agent can combine business operations, retrieval-augmented generation (RAG), persistent customer memory, code execution, and browser interaction in a single customer-support workflow.
 
 ## 1. Project Overview
 
-The objective of this project was to develop a customer support AI agent capable of handling common customer service operations while maintaining conversational context and accessing external business capabilities.
+The agent is designed to handle common customer-service operations while maintaining conversational context and accessing external business capabilities.
 
-The agent can:
+It can:
 
 - Retrieve customer and order information.
-- Check refund eligibility and initiate refund requests.
-- Answer product-related questions using a Knowledge Base.
-- Retain customer preferences across interactions.
-- Calculate loyalty rewards, discounts and order totals.
-- Navigate web pages and retrieve relevant information.
+- Check refund information and initiate refund requests.
+- Answer product and loyalty-program questions using a Knowledge Base.
+- Retain customer preferences across separate conversations.
+- Calculate loyalty-point redemptions, tier discounts, order totals, and earned points.
+- Navigate web pages and retrieve page information.
 
-The solution uses Amazon Bedrock AgentCore for agent deployment and managed capabilities, while the Strands Agents SDK provides the agent orchestration and tool integration.
+Amazon Bedrock AgentCore provides the managed runtime and agent capabilities. The Strands Agents SDK provides agent orchestration and tool integration.
 
 ## 2. System Architecture
 
-The application separates the agent's reasoning from external business operations through AgentCore Gateway and MCP-connected tools.
+The application separates agent reasoning from external business operations through AgentCore Gateway and MCP-connected tools.
 
 ### Architecture Components
 
@@ -29,34 +29,33 @@ The application separates the agent's reasoning from external business operation
 |---|---|
 | Amazon Bedrock | Provides the foundation model used by the agent. |
 | Strands Agents SDK | Orchestrates the agent and its tools. |
-| AgentCore Runtime | Hosts the deployed customer support agent. |
+| AgentCore Runtime | Hosts the deployed customer-support agent. |
 | AgentCore Gateway | Connects the agent to external business capabilities through MCP. |
 | AWS Lambda | Implements order-tracking and refund-processing operations. |
 | Amazon API Gateway | Exposes the order-management API. |
-| Amazon Bedrock Knowledge Bases | Provides product and support information for retrieval-augmented responses. |
+| Amazon Bedrock Knowledge Bases | Retrieves product and support information. |
 | AgentCore Memory | Stores and retrieves customer preferences and interaction history. |
-| AgentCore Code Interpreter | Executes loyalty reward and discount calculations. |
+| AgentCore Code Interpreter | Executes loyalty-reward and discount calculations. |
 | AgentCore Browser | Enables browser-based navigation and information retrieval. |
 
 ### Architecture Design
 
-The agent communicates with external business tools through AgentCore Gateway.
+The agent accesses order and refund operations through Gateway-connected tools. Product and loyalty information is retrieved through the Knowledge Base, while AgentCore Memory makes customer preferences available across interactions.
 
-Order-related operations are exposed through API Gateway and Lambda-backed functionality. Product information is retrieved through the Knowledge Base, while customer preferences are maintained through AgentCore Memory.
+Code Interpreter performs loyalty calculations. AgentCore Browser supports web navigation and page-content retrieval.
 
-Code Interpreter handles loyalty calculations, and AgentCore Browser supports web interaction.
-
-This modular design separates agent reasoning from the underlying business operations and makes individual capabilities easier to maintain and extend.
+This modular design separates agent reasoning from backend business operations and makes individual capabilities easier to maintain and extend.
 
 ## 3. Core Features and Functional Testing
 
-All six core capabilities were implemented and tested in the configured AWS environment.
+The six core capabilities were exercised against the deployed AgentCore runtime. The following sections describe the tests performed and link to the corresponding evidence.
 
 ### 3.1 Order Tracking
 
-Retrieves customer and order information through Gateway-connected API tools.
+Order information is retrieved through Gateway-connected API tools.
 
 The agent can provide:
+
 - Order status.
 - Product information.
 - Shipping carrier.
@@ -67,69 +66,110 @@ The agent can provide:
 
 ### 3.2 Refund Processing
 
-Connects to Lambda-backed refund-processing tools through AgentCore Gateway.
+Refund operations are connected to Lambda-backed tools through AgentCore Gateway.
 
-The agent can check refund status, retrieve return-label information and initiate refund requests.
+The agent can retrieve refund information and initiate refund requests using the available business tools.
 
 **Evidence:** `screenshots/functional/Deliverable_2_Refund_Processing.png`
 
 ### 3.3 Knowledge Base and Retrieval-Augmented Generation
 
-Uses Amazon Bedrock Knowledge Bases to retrieve relevant product and support information.
+Amazon Bedrock Knowledge Bases retrieves relevant product and loyalty-program information to ground the agent's responses.
 
-This enables the agent to provide responses grounded in retrieved information rather than relying exclusively on the foundation model's general knowledge.
+**Reviewer test:** The agent was asked to explain the benefits and privileges available to Platinum loyalty members. The response included free same-day shipping, a 15% tier discount, priority customer support, points-earning rules, redemption rules, and loyalty-tier thresholds. CloudWatch logs confirmed invocation of the `search_knowledge_base` tool.
 
-**Evidence:** `screenshots/functional/Deliverable_3_Knowledge_Base_RAG.png`
+**Evidence:**
+
+- `screenshots/functional/Deliverable_3_Knowledge_Base_RAG.png`
+- `screenshots/functional/Deliverable_3_Knowledge_Base_Command.png`
+- `screenshots/functional/Deliverable_3_Knowledge_Base_Response_1.png`
+- `screenshots/functional/Deliverable_3_Knowledge_Base_Response_2.png`
+- `screenshots/functional/Deliverable_3_Knowledge_Base_Verification_Log.png`
 
 ### 3.4 Persistent Customer Memory
 
-Uses AgentCore Memory to retain and retrieve customer preferences and interaction context.
+AgentCore Memory stores and retrieves customer preferences and interaction context.
 
-This allows the agent to use previously established customer preferences when responding to subsequent interactions.
+**Reviewer test:** In the first session, a test customer named Jane asked the agent to remember that product recommendations should compare price, warranty, and return policy. In a separate second session, Jane asked what criteria should be used. The agent recalled all three preferences without Jane repeating them. Runtime logs confirmed that memory records were retrieved and injected into the second session.
 
 **Evidence:**
+
 - `screenshots/functional/Deliverable_4_Memory_Persistence.png`
 - `screenshots/functional/Deliverable_4_Memory_Persistence_Logs.png`
+- `screenshots/functional/Memory_Jane_Session1_Preference_Saved.png`
+- `screenshots/functional/Memory_Jane_Session1_Response.png`
+- `screenshots/functional/Memory_Jane_Session2_Retrieval_Command.png`
+- `screenshots/functional/Memory_Jane_Session2_Preference_Recalled.png`
+- `screenshots/functional/Memory_CloudWatch_Retrieval_Verification.png`
 
 ### 3.5 Loyalty Rewards Calculation
 
-Uses AgentCore Code Interpreter to execute loyalty calculations.
+AgentCore Code Interpreter executes the loyalty calculation. The application parses and validates the structured calculation output before presenting the result.
 
-The functionality includes:
-- Loyalty-point redemption.
-- Tier-based discounts.
-- Final order total.
-- Total customer savings.
-- Points earned.
-- Remaining loyalty points.
+**Reviewer test inputs:**
 
-The application also validates the structured interpreter output before presenting calculation results.
+| Input | Value |
+|---|---:|
+| Loyalty points | 4,250 |
+| Membership tier | Gold |
+| Order total | $150.00 |
+| Product category | Standard |
+
+**Verified calculation:**
+
+| Result | Value |
+|---|---:|
+| Points redeemed | 4,000 |
+| Points discount | $40.00 |
+| Gold tier discount | 10% |
+| Tier discount amount | $11.00 |
+| Final order total | $99.00 |
+| Total savings | $51.00 |
+| Points earned | 99 |
+| Remaining points | 349 |
+
+The test response identified `code_interpreter` as the calculation method.
 
 **Evidence:**
+
 - `screenshots/functional/Deliverable_5_Loyalty_Calculation.png`
 - `screenshots/functional/Deliverable_5_Loyalty_Calculation_Logs.png`
+- `screenshots/functional/Deliverable_4_Loyalty_Gold_Calculation_Command.png`
+- `screenshots/functional/Deliverable_4_Loyalty_Gold_Calculation.png`
 
 ### 3.6 Browser Interaction
 
-Uses AgentCore Browser capabilities to navigate web pages and retrieve page information.
+AgentCore Browser is used to navigate web pages and retrieve page information.
 
-The implementation was tested using a successful browser navigation and page-content retrieval operation.
+**Reviewer test:** The agent was asked to visit `https://www.udacity.com` and report the page title. It returned:
+
+`Learn the Latest Tech Skills; Advance Your Career | Udacity`
+
+The response was obtained and the runtime logs recorded browser tool activity, session initialization, and successful invocation completion. The logs also showed asynchronous browser execution warnings during the attempt, so browser reliability remains an area for improvement.
 
 **Evidence:**
+
 - `screenshots/functional/Deliverable_6_Browser_Interaction.png`
 - `screenshots/functional/Deliverable_6_Browser_Interaction_Logs_1.png`
 - `screenshots/functional/Deliverable_6_Browser_Interaction_Logs_2.png`
 - `screenshots/functional/Deliverable_6_Browser_Interaction_Logs_3.png`
+- `screenshots/functional/Browser_01_Udacity_Test_Command.png`
+- `screenshots/functional/Browser_02_Udacity_Page_Title.png`
+- `screenshots/functional/Browser_03_CloudWatch_Tool_Invocation.png`
+- `screenshots/functional/Browser_04_CloudWatch_Session_Started.png`
+- `screenshots/functional/Browser_05_CloudWatch_Invocation_Completed.png`
 
 ## 4. Technology Stack
 
 ### Programming and Agent Frameworks
+
 - Python 3.13
 - Strands Agents SDK
-- MCP
+- Model Context Protocol (MCP)
 - Boto3
 
 ### AWS Services
+
 - Amazon Bedrock
 - Amazon Bedrock AgentCore Runtime
 - Amazon Bedrock AgentCore Gateway
@@ -139,15 +179,18 @@ The implementation was tested using a successful browser navigation and page-con
 - Amazon Bedrock Knowledge Bases
 - AWS Lambda
 - Amazon API Gateway
+- Amazon CloudWatch
 
 ### Development Tools
+
 - uv
 - Git
 - Linux
+- Visual Studio Code
 
 ## 5. Repository Structure
 
-~~~text
+```text
 .
 ├── lambda/
 │   ├── lambda_schema
@@ -164,21 +207,21 @@ The implementation was tested using a successful browser navigation and page-con
 ├── REFLECTION.md
 ├── .env.example
 └── .gitignore
-~~~
+```
 
 ### Important Files
 
 | File | Description |
 |---|---|
-| `main.py` | Main agent implementation and orchestration. |
+| `main.py` | Main agent implementation, orchestration, and tool integration. |
 | `lambda/order_tracker.py` | Order-tracking Lambda implementation. |
 | `lambda/refund_processor.py` | Refund-processing Lambda implementation. |
 | `lambda/lambda_schema` | Lambda-related schema file. |
 | `product_catalog.txt` | Product information used by the project. |
 | `pyproject.toml` | Python project metadata and dependencies. |
 | `uv.lock` | Locked dependency versions. |
-| `REFLECTION.md` | Project reflection, technical challenges and lessons learned. |
-| `screenshots/` | Functional and infrastructure evidence. |
+| `REFLECTION.md` | Project reflection, technical challenges, and lessons learned. |
+| `screenshots/` | Functional test and infrastructure evidence. |
 
 ## 6. Prerequisites
 
@@ -188,7 +231,7 @@ To work with this project, you need:
 - An AWS account with access to the required Amazon Bedrock and AgentCore services.
 - AWS credentials configured through an appropriate credential provider.
 - IAM permissions for the required AWS services.
-- uv package manager.
+- The uv package manager.
 - Access to the required AgentCore and Knowledge Base resources.
 
 ## 7. Configuration
@@ -205,33 +248,32 @@ The application uses environment variables to configure its AWS resources and mo
 
 ### Example Configuration
 
-~~~bash
+```bash
 export AWS_DEFAULT_REGION="us-east-1"
 export GATEWAY_URL="<your-agentcore-gateway-mcp-endpoint>"
 export KB_ID="<your-knowledge-base-id>"
 export MEMORY_ID="<your-agentcore-memory-id>"
 export MODEL_ID="amazon.nova-lite-v1:0"
-~~~
+```
 
 An example environment template is provided in `.env.example`.
 
-AWS credentials should be configured separately using an appropriate AWS credential provider. Do not place access keys, secret keys or other sensitive credentials in the repository.
+AWS credentials should be configured separately using an appropriate AWS credential provider. Do not place access keys, secret keys, or other sensitive credentials in the repository.
 
 ## 8. Installation
 
 Clone the repository:
 
-~~~bash
+```bash
 git clone https://github.com/Light-Ibeh/production-grade-customer-support-ai-agent.git
-
 cd production-grade-customer-support-ai-agent
-~~~
+```
 
 Install project dependencies:
 
-~~~bash
+```bash
 uv sync
-~~~
+```
 
 Configure the required environment variables and AWS credentials before running or deploying the application.
 
@@ -239,17 +281,17 @@ Configure the required environment variables and AWS credentials before running 
 
 The application is deployed using the Amazon Bedrock AgentCore CLI.
 
-With the required AWS infrastructure provisioned and the deployment configuration prepared, deploy the agent using:
+With the required AWS infrastructure provisioned and deployment configuration prepared, deploy the agent using:
 
-~~~bash
+```bash
 uv run agentcore deploy
-~~~
+```
 
 Check deployment status:
 
-~~~bash
+```bash
 uv run agentcore status
-~~~
+```
 
 The runtime should report a ready status before functional testing.
 
@@ -257,32 +299,28 @@ The runtime should report a ready status before functional testing.
 
 The local AgentCore deployment configuration is intentionally excluded from this repository because it contains environment-specific deployment settings.
 
-Anyone deploying the project in another AWS environment must configure their own AgentCore resources, deployment settings, IAM permissions and environment variables.
-
-The repository does not automatically provision all the AWS infrastructure required by the application.
+Anyone deploying the project in another AWS environment must configure their own AgentCore resources, deployment settings, IAM permissions, and environment variables. The repository does not automatically provision all AWS infrastructure required by the application.
 
 ## 10. Testing and Evidence
 
-Functional testing was performed against the deployed AgentCore runtime.
-
-The `screenshots/functional/` directory contains evidence for the six implemented capabilities.
-
-The `screenshots/infrastructure/` directory contains additional evidence of infrastructure configuration and deployment.
+Functional testing was performed against the deployed AgentCore runtime. The `screenshots/functional/` directory contains the original feature evidence and the additional reviewer-focused test evidence. The `screenshots/infrastructure/` directory contains infrastructure and deployment evidence.
 
 ### Infrastructure Evidence
 
 | Evidence | File |
 |---|---|
-| IAM permission configuration | `IAM_Permission_Applied.png` |
-| Knowledge Base configuration | `Infrastructure_1_Knowledge_Base.png` |
-| AgentCore deployment | `Infrastructure_2_AgentCore_Deployment.png` |
-| Runtime smoke test | `Smoke_Test_Success.png` |
+| IAM permission configuration | `screenshots/infrastructure/IAM_Permission_Applied.png` |
+| Knowledge Base configuration | `screenshots/infrastructure/Infrastructure_1_Knowledge_Base.png` |
+| AgentCore deployment | `screenshots/infrastructure/Infrastructure_2_AgentCore_Deployment.png` |
+| Runtime smoke test | `screenshots/infrastructure/Smoke_Test_Success.png` |
+| Deployment success | `screenshots/infrastructure/deployment_success.png` |
+| Runtime status | `screenshots/infrastructure/runtime_status.png` |
 
-CloudWatch log screenshots are also included where applicable to demonstrate tool execution and runtime behaviour.
+CloudWatch log screenshots are included where applicable to demonstrate tool execution, memory retrieval, and runtime behaviour.
 
 ## 11. Security Considerations
 
-The repository excludes local AWS deployment state, environment-specific configuration, virtual environments and temporary files.
+The repository excludes local AWS deployment state, environment-specific configuration, virtual environments, and temporary files.
 
 Security practices include:
 
@@ -290,9 +328,9 @@ Security practices include:
 - Using environment variables for resource identifiers.
 - Excluding sensitive configuration from version control.
 - Applying appropriate IAM permissions.
-- Avoiding the publication of account-specific deployment information.
+- Avoiding publication of account-specific deployment information.
 
-A production deployment should additionally implement stronger customer authentication, role-based access control, data-retention policies and approval workflows for sensitive operations.
+A production deployment should additionally implement stronger customer authentication, role-based access control, data-retention policies, and approval workflows for sensitive operations.
 
 ## 12. Future Improvements
 
@@ -301,26 +339,24 @@ Potential improvements for a production environment include:
 - Integrating a production order-management and payment system.
 - Implementing stronger customer authentication and role-based access control.
 - Introducing human approval for sensitive operations such as refunds.
+- Protecting refund operations with idempotency controls to prevent duplicate transactions on retries.
 - Expanding automated unit and integration testing.
-- Improving error handling and application resilience.
+- Improving browser reliability by replacing deprecated browser tooling with a supported integration using AgentCore BrowserClient and Playwright.
 - Introducing comprehensive usage and cost monitoring.
 - Implementing more extensive security and data-retention controls.
-- Replacing deprecated browser tooling with a supported integration using AgentCore BrowserClient.
 
 ## 13. Project Status
 
-The customer support agent has been deployed to Amazon Bedrock AgentCore.
-
-All six core functional capabilities have been successfully tested in the configured AWS environment:
+The customer-support agent has been deployed to Amazon Bedrock AgentCore. The six core capabilities have been exercised in the configured AWS environment:
 
 1. Order tracking.
 2. Refund processing.
-3. Knowledge Base and RAG.
-4. Persistent customer memory.
-5. Loyalty rewards calculation.
-6. Browser interaction.
+3. Knowledge Base retrieval.
+4. Persistent customer memory across separate sessions.
+5. Loyalty rewards calculation using Code Interpreter.
+6. Browser navigation and page-title retrieval.
 
-Functional screenshots, infrastructure evidence and selected CloudWatch logs are included in this repository.
+The repository includes the original functional evidence, additional reviewer-focused screenshots, infrastructure evidence, and the project reflection.
 
 ---
 
